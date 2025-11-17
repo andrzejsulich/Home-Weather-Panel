@@ -1,0 +1,867 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dashboard — Clock, Calendar, Weather, ToDo</title>
+<style>
+  :root{
+    --bg:#071019;
+    --panel:#0f1620;
+    --muted:#98a0aa;
+    --accent:#4fc3f7;
+    --glass: rgba(255,255,255,0.03);
+    --card-border: rgba(255,255,255,0.04);
+    --max-clock: 520px; /* maximum clock size on desktop */
+  }
+  /* CHANGE 1: Kept overflow: hidden for scrollbar removal */
+  html,body{
+    height:100%;
+    margin:0;
+    background:linear-gradient(180deg,#071019 0%, #07121a 100%);
+    font-family:Inter,system-ui,Segoe UI,Roboto,Arial;
+    color:#dfe9f2;
+    touch-action:none;
+    overflow: hidden; /* Prevent primary scrollbars */
+  }
+  /* Grid wrapper using CSS variables for split sizes */
+  #wrapper{
+    height:100%; 
+    /* CHANGE 2: Replaced column percentages with 1fr (left) and fixed pixel width (right) */
+    grid-template-columns: 1fr var(--split-w, 12px) var(--right-width, 420px); 
+    /* CHANGE 3: Replaced bottom row percentage with 1fr to ensure fit */
+    grid-template-rows: var(--top-height, 1fr) var(--split-h, 12px) 1fr;
+    display:grid; 
+    gap:12px;
+    padding:12px;
+    box-sizing:border-box;
+    align-items:stretch;
+  }
+  .panel{
+    background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));
+    border:1px solid var(--card-border);
+    border-radius:10px;
+    padding:12px;
+    box-shadow: 0 6px 18px rgba(3,8,12,0.6);
+    overflow:hidden;
+    display:flex;
+    flex-direction:column;
+  }
+
+  /* Splitter styling (thin transparent areas but visible handle) */
+  .splitter-vertical{
+    width:var(--split-w,12px); cursor:ew-resize; background:transparent; display:flex; align-items:center; justify-content:center; user-select:none;
+  }
+  .splitter-horizontal{
+    height:var(--split-h,12px); cursor:ns-resize; background:transparent; display:flex; align-items:center; justify-content:center; user-select:none;
+  }
+  .split-handle{
+    width:34px;height:34px;border-radius:6px;background:rgba(255,255,255,0.02);border:1px solid rgba(255,255,255,0.03);display:inline-block;
+  }
+
+  /* Left top: clock */
+  #clockPanel{grid-column:1;grid-row:1; align-items:flex-start; justify-content:flex-start;}
+  .clock-header{display:flex;justify-content:space-between;align-items:center;width:100%}
+  .clock-note{font-size:13px;color:var(--muted)}
+  /* Make the clock big and responsive to the panel size; it adapts up to --max-clock */
+  .clock-wrapper{flex:1;display:flex;align-items:center;justify-content:center;width:100%}
+  .clock{
+    width:clamp(260px, min(86vw, var(--max-clock)), 100%); /* responsive: depends on viewport but limited */
+    max-width:100%;
+    aspect-ratio: 1.1 / 1; /* keep it fairly wide on tablets */
+    background:var(--panel);
+    border-radius:12px;
+    display:flex;align-items:center;justify-content:center;
+    position:relative;padding:18px; box-sizing:border-box;
+    transition: width .12s ease, height .12s ease;
+  }
+  /* digital size scales */
+  .digital{font-size: clamp(28px, 4.5vw, 56px); text-align:center; line-height:1}
+  .digital .date{font-size: clamp(12px, 1.6vw, 18px); color:var(--muted); margin-top:8px}
+
+  /* analog clock scaled to container */
+  .analog{
+    width:100%; height:100%; display:flex; align-items:center; justify-content:center; position:relative;
+  }
+  .face{
+    width:85%; height:85%; max-width:460px; max-height:460px; aspect-ratio:1/1; border-radius:50%; background:linear-gradient(180deg,#0b1116,#08101a); display:grid; place-items:center; position:relative; border:2px solid rgba(255,255,255,0.03);
+  }
+  .hand{position:absolute; left:50%; top:50%; transform-origin:50% 100%; border-radius:4px;}
+  .hand.hour{width:6px; height:22%; background:var(--accent); transform:translateX(-50%) translateY(-100%);}
+  .hand.minute{width:4px; height:30%; background:#dfe9f2; transform:translateX(-50%) translateY(-100%);}
+  .hand.second{width:2px; height:38%; background:#ff6b6b; transform:translateX(-50%) translateY(-100%);}
+  .center-dot{position:absolute;width:12px;height:12px;background:#fff;border-radius:50%;left:50%;top:50%;transform:translate(-50%,-50%);box-shadow:0 0 6px rgba(0,0,0,0.6)}
+  .face .tick{position:absolute;width:4px;height:12px;background:rgba(255,255,255,0.06);left:50%;top:10%;transform-origin:50% 100%}
+
+  /* Calendar (left bottom) */
+  #calendarPanel{grid-column:1;grid-row:3; gap:10px; display:flex}
+  .cal-top{display:flex;justify-content:space-between;align-items:center;}
+  .cal-grid{display:grid; grid-template-columns: repeat(7,1fr); gap:6px; margin-top:8px;}
+  .cal-day{padding:8px; background:var(--glass); border-radius:6px; text-align:center; color:#cfe7ff; font-weight:700; cursor:pointer; border:1px solid transparent}
+  .cal-day.other{opacity:0.4}
+  .cal-day.today{box-shadow:0 0 0 2px rgba(79,195,247,0.12); border-color:rgba(79,195,247,0.18)}
+  .cal-day.has-reminder{outline:3px solid rgba(123,228,149,0.06)}
+  .cal-day.selected{background:linear-gradient(90deg, rgba(79,195,247,0.12), rgba(79,195,247,0.06));color:var(--accent)}
+
+  /* Right top: weather */
+  #weatherPanel{grid-column:3;grid-row:1;display:flex;flex-direction:column;gap:12px;min-height:0;}
+  .weather-header{display:flex;justify-content:space-between;align-items:center}
+  .current-card{display:flex;gap:12px;align-items:center;padding:12px;border-radius:8px;background:linear-gradient(90deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00));border:1px solid rgba(255,255,255,0.03)}
+  .weather-icon{width:76px;height:76px;display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,0.02)}
+  .current-details{flex:1;display:flex;flex-direction:column;gap:6px}
+  .temp-big{font-size:40px;font-weight:800}
+  .summary-big{font-size:18px;color:#e6f8ff}
+  .current-metrics{display:flex;gap:10px;flex-wrap:wrap}
+  .metric{display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.02);padding:6px 8px;border-radius:8px}
+  .metric svg{width:22px;height:22px;opacity:0.95}
+  .metric .val{font-weight:700;color:#dff7ff}
+
+  .forecast-grid{display:grid;grid-auto-flow:column;grid-auto-columns:1fr; gap:8px; overflow-x:auto;padding-bottom:6px}
+  .day-card{min-width:110px;background:linear-gradient(180deg, rgba(255,255,255,0.01), rgba(255,255,255,0.00)); padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.03);display:flex;flex-direction:column;gap:8px;align-items:center}
+
+  /* Right bottom: To-Do List */
+  #todoPanel{grid-column:3;grid-row:3; display:flex; flex-direction:column; gap:10px; min-height:0; overflow:hidden;}
+  .todo-list{flex:1; overflow-y:auto; padding-right:4px;}
+  .todo-item{
+    display:flex; justify-content:space-between; align-items:center;
+    padding:8px; margin-bottom:6px; border-radius:6px; background:rgba(255,255,255,0.02);
+  }
+  .todo-item.completed{opacity:0.6;}
+  .todo-item.completed .todo-text{text-decoration:line-through;}
+  .todo-text{flex:1; margin-left:10px; font-weight:500; cursor:pointer;}
+  .todo-input-bar{display:flex; gap:8px; align-items:center; margin-top:8px;}
+  .todo-input-bar input{flex:1; background:transparent; border:1px solid var(--card-border); padding:8px; border-radius:8px; color:#dfe9f2;}
+
+  /* modal and helpers */
+  .modal-back{position:fixed;inset:0;background:rgba(2,6,10,0.6);display:none;align-items:center;justify-content:center;z-index:80}
+  .modal{background:#07111a;border-radius:12px;padding:18px;min-width:320px;border:1px solid rgba(255,255,255,0.04)}
+  .modal label{display:block;margin-top:8px;color:var(--muted);font-size:13px}
+  textarea{width:100%;min-height:80px;background:transparent;border:1px solid var(--card-border);color:#dfe9f2;padding:8px;border-radius:8px}
+
+  .row{display:flex;gap:8px;align-items:center}
+  .muted{color:var(--muted)}
+  .tiny{font-size:12px;color:var(--muted)}
+  .btn{background:var(--accent);color:#06202a;border:none;padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:700;line-height:1}
+  .btn.ghost{background:transparent;border:1px solid var(--card-border);color:var(--muted)}
+
+  /* scrollbar style for forecast grid and todo list */
+  .forecast-grid::-webkit-scrollbar{height:10px}
+  .forecast-grid::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.04);border-radius:10px}
+  .todo-list::-webkit-scrollbar{width:8px}
+  .todo-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.04);border-radius:10px}
+
+  /* small screens */
+  @media (max-width:1100px){
+    /* Adjusted grid template for small screens to stack panels */
+    #wrapper{grid-template-columns: 1fr; grid-template-rows: auto auto auto auto auto auto; }
+    #weatherPanel, #todoPanel{grid-column:1;grid-row:auto}
+    .splitter-vertical, .splitter-horizontal{display:none}
+    .clock{width:84vw}
+    .face{width:80%}
+  }
+</style>
+</head>
+<body>
+<div id="wrapper" style="--right-width:420px; --top-height:52%;">
+  <div id="clockPanel" class="panel">
+    <div class="clock-header">
+      <div>
+        <div class="small-muted">Clock</div>
+        <div class="clock-note">Tap / click the clock to toggle analog / digital</div>
+      </div>
+      <div class="row">
+        <div class="tiny muted">Timezone: <span id="tzName"></span></div>
+        <button id="copyBtn" class="btn ghost" title="Copy current time to clipboard" style="margin-left:8px">Copy Time</button>
+      </div>
+    </div>
+
+    <div class="clock-wrapper" style="margin-top:10px">
+      <div id="clock" class="clock" role="button" aria-label="Clock, tap to toggle view">
+        <div id="analogContainer" class="analog" style="display:none">
+          <div class="face" id="face">
+            <div class="tick" style="transform:translateX(-50%) rotate(0deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(30deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(60deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(90deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(120deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(150deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(180deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(210deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(240deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(270deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(300deg)"></div>
+            <div class="tick" style="transform:translateX(-50%) rotate(330deg)"></div>
+
+            <div class="hand hour" id="hourHand"></div>
+            <div class="hand minute" id="minuteHand"></div>
+            <div class="hand second" id="secondHand"></div>
+            <div class="center-dot"></div>
+          </div>
+        </div>
+
+        <div id="digitalContainer" class="digital" style="display:none;text-align:center">
+          <div id="timeStr">--:--:--</div>
+          <div class="date" id="dateStr">----</div>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">
+      <div class="small-muted">Local time</div>
+      <div class="muted tiny">Tap / click the clock to switch view</div>
+    </div>
+  </div>
+
+  <div id="splitV" class="splitter-vertical" style="grid-column:2;grid-row:1 / span 3;display:flex;align-items:center;justify-content:center;">
+    <div class="split-handle" title="Drag to resize columns"></div>
+  </div>
+
+  <div id="weatherPanel" class="panel">
+    <div class="weather-header">
+      <div>
+        <div class="small-muted">Weather — 7 day</div>
+        <div class="tiny muted" id="locLabel">Location: not set</div>
+      </div>
+      <div class="row">
+        <input id="locationInput" type="text" placeholder="City or lat,lon" style="min-width:140px;background:transparent;border:1px solid var(--card-border);padding:8px;border-radius:8px;color:#dfe9f2" />
+        <button id="setLoc" class="btn" style="margin-left:6px">Set</button>
+        <button id="useGeoloc" class="btn ghost" style="margin-left:6px">Autolocate</button>
+      </div>
+    </div>
+
+    <div style="margin-top:10px;display:flex;flex-direction:column;gap:12px;flex:1;min-height:0;overflow:hidden;">
+      <div class="current-card" id="currentCard" style="min-height:96px">
+        <div class="weather-icon" id="curIcon" title="Current weather icon">
+          </div>
+        <div class="current-details">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div class="temp-big" id="currentTemp">--°</div>
+              <div class="summary-big" id="currentSummary">--</div>
+            </div>
+            <div style="text-align:right">
+              <div class="tiny muted" id="currentTime">--</div>
+              <div class="tiny muted" id="currentAQ">AQ: --</div>
+            </div>
+          </div>
+
+          <div class="current-metrics" id="currentMetrics">
+            </div>
+        </div>
+      </div>
+
+      <div style="flex:1;min-height:0;overflow:hidden;display:flex;flex-direction:column;">
+        <div class="small-muted" style="margin-bottom:6px">7-day forecast</div>
+        <div class="forecast-grid" id="forecastGrid" aria-live="polite"></div>
+        <div class="tiny muted" id="fullReport" style="margin-top:auto;padding-top:6px;">Source: Open-Meteo</div>
+      </div>
+
+    </div>
+  </div>
+
+  <div id="splitH" class="splitter-horizontal" style="grid-column:1 / span 3;grid-row:2;display:flex;align-items:center;justify-content:center;">
+    <div class="split-handle" title="Drag to resize rows"></div>
+  </div>
+
+  <div id="calendarPanel" class="panel">
+    <div class="cal-top" style="align-items:center;">
+      <div>
+        <div class="small-muted">Calendar & Reminders</div>
+        <div class="tiny muted">Select a date to add / view reminders</div>
+      </div>
+      <div class="cal-controls">
+        <button id="prevMonth" class="btn ghost">Prev</button>
+        <button id="nextMonth" class="btn ghost">Next</button>
+        <button id="exportRem" class="btn">Export</button>
+        <button id="importRem" class="btn ghost">Import</button>
+        <input id="importFile" type="file" accept="application/json" style="display:none" />
+      </div>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:10px;margin-top:10px">
+      <div style="font-weight:700;font-size:18px" id="monthLabel">Month</div>
+      <div class="tiny muted" id="yearLabel">Year</div>
+    </div>
+
+    <div style="margin-top:8px;overflow:auto;flex:1;min-height:0">
+      <div class="cal-grid" id="calGrid"></div>
+    </div>
+
+    <div style="margin-top:8px">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <div class="small-muted">Reminders on <span id="selectedDateLabel">—</span></div>
+        <button id="addReminderBtn" class="btn">Add Reminder</button>
+      </div>
+
+      <div class="reminder-list" id="reminderList" style="margin-top:8px;max-height:160px;overflow:auto"></div>
+    </div>
+  </div>
+
+  <div id="todoPanel" class="panel">
+    <div class="small-muted">To-Do List</div>
+    <div class="tiny muted">Simple task management (local storage)</div>
+
+    <div class="todo-list" id="todoListContainer">
+      </div>
+
+    <div class="todo-input-bar">
+      <input type="text" id="newTodoInput" placeholder="Add a new task..." />
+      <button id="addTodoBtn" class="btn">Add</button>
+    </div>
+
+  </div>
+
+</div>
+
+<div class="modal-back" id="modalBack">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div id="modalTitle" style="font-weight:700">Add / Edit Reminder</div>
+    <label>When</label>
+    <input id="remDate" type="date" style="width:100%;padding:8px;border-radius:8px;background:transparent;border:1px solid var(--card-border);color:#dfe9f2"/>
+    <label>Time</label>
+    <input id="remTime" type="time" style="width:100%;padding:8px;border-radius:8px;background:transparent;border:1px solid var(--card-border);color:#dfe9f2"/>
+    <label>Title</label>
+    <input id="remTitle" type="text" placeholder="Short title" style="width:100%;padding:8px;border-radius:8px;background:transparent;border:1px solid var(--card-border);color:#dfe9f2"/>
+    <label>Details</label>
+    <textarea id="remDetails" placeholder="Reminder details..."></textarea>
+
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:10px">
+      <button id="cancelModal" class="btn ghost">Cancel</button>
+      <button id="saveModal" class="btn">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ------------------------------ Persistence keys ------------------------------ */
+const SPLIT_KEY = 'dashboard_split_sizes_v2'; 
+const STORAGE_KEY = 'dashboard_reminders_v1';
+const LOC_KEY = 'dashboard_location_v1';
+const TODO_KEY = 'dashboard_todos_v1'; 
+
+/* ------------------------------ Utility functions ------------------------------ */
+function by(id){ return document.getElementById(id); }
+function clamp(v,min,max){ return Math.max(min, Math.min(max, v)); }
+function fmtDate(d){ const y=d.getFullYear(), m=String(d.getMonth()+1).padStart(2,'0'), dd=String(d.getDate()).padStart(2,'0'); return `${y}-${m}-${dd}`; }
+function escapeHtml(s){ if(!s) return ''; return String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+
+/* ------------------------------ Splitter persistence and behavior ------------------------------ */
+const wrapper = by('wrapper');
+// CHANGE 5: Updated load and save functions to use 'rightWidth' and 'topHeight'
+function loadSplitSizes(){
+  try{
+    const raw = localStorage.getItem(SPLIT_KEY);
+    if(!raw) return;
+    const o = JSON.parse(raw);
+    if(o.rightWidth) wrapper.style.setProperty('--right-width', o.rightWidth);
+    if(o.topHeight) wrapper.style.setProperty('--top-height', o.topHeight);
+    if(o.splitW) wrapper.style.setProperty('--split-w', o.splitW);
+    if(o.splitH) wrapper.style.setProperty('--split-h', o.splitH);
+  }catch(e){ console.error(e); }
+}
+function saveSplitSizes(){
+  const style = getComputedStyle(wrapper);
+  const rightWidth = style.getPropertyValue('--right-width').trim();
+  const topHeight = style.getPropertyValue('--top-height').trim();
+  const splitW = style.getPropertyValue('--split-w').trim();
+  const splitH = style.getPropertyValue('--split-h').trim();
+  localStorage.setItem(SPLIT_KEY, JSON.stringify({rightWidth, topHeight, splitW, splitH}));
+}
+loadSplitSizes();
+
+/* Vertical split drag handling (left/right columns) - Now controls fixed pixel width of right panel */
+const splitV = by('splitV');
+let dragging = null;
+splitV.addEventListener('pointerdown', e=>{
+  dragging = {type:'v', id:e.pointerId};
+  splitV.setPointerCapture(e.pointerId);
+});
+splitV.addEventListener('pointermove', e=>{
+  if(!dragging || dragging.type!=='v') return;
+  const rect = wrapper.getBoundingClientRect();
+  const W = rect.width;
+  // Calculate new width for the right panel in pixels. 
+  // rect.right - e.clientX is the distance from the mouse (splitter left edge) to the right edge of the wrapper.
+  // 12px is the right padding of the wrapper.
+  const newRightWidth = rect.right - e.clientX - 12; 
+  
+  // Clamping to ensure a minimum size for both left and right panels (e.g., 180px minimum for each)
+  const minPanelSize = 180;
+  const clampedRightWidth = clamp(newRightWidth, minPanelSize, W - minPanelSize - 12); // Max is total width - min left size - splitter width
+  
+  wrapper.style.setProperty('--right-width', `${clampedRightWidth}px`);
+});
+splitV.addEventListener('pointerup', e=>{ if(dragging && dragging.type==='v') saveSplitSizes(); dragging=null; try{ splitV.releasePointerCapture(e.pointerId);}catch(e){}; });
+
+/* Horizontal split drag handling (top/bottom rows) - Now controls top row height in percentage */
+const splitH = by('splitH');
+splitH.addEventListener('pointerdown', e=>{
+  dragging = {type:'h', id:e.pointerId};
+  splitH.setPointerCapture(e.pointerId);
+});
+splitH.addEventListener('pointermove', e=>{
+  if(!dragging || dragging.type!=='h') return;
+  const rect = wrapper.getBoundingClientRect();
+  // Calculate vertical position relative to wrapper height, clamped between 10% and 90%
+  const rel = clamp((e.clientY - rect.top) / rect.height * 100, 10, 90); 
+  // The bottom row is 1fr and will take the remaining height automatically
+  wrapper.style.setProperty('--top-height', `${rel}%`); 
+});
+splitH.addEventListener('pointerup', e=>{ if(dragging && dragging.type==='h') saveSplitSizes(); dragging=null; try{ splitH.releasePointerCapture(e.pointerId);}catch(e){} });
+
+
+/* ------------------------------ Reminders and Location storage ------------------------------ */
+function loadReminders(){ try{ return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}'); }catch(e){ return {}; } }
+function saveReminders(obj){ localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); }
+function loadLocation(){ try{ return JSON.parse(localStorage.getItem(LOC_KEY) || 'null'); }catch(e){ return null; } }
+function saveLocation(loc){ localStorage.setItem(LOC_KEY, JSON.stringify(loc)); }
+
+/* ------------------------------ To-Do List logic ------------------------------ */
+const todoListContainer = by('todoListContainer');
+const newTodoInput = by('newTodoInput');
+const addTodoBtn = by('addTodoBtn');
+
+function loadTodos(){
+  try{ return JSON.parse(localStorage.getItem(TODO_KEY) || '[]'); }catch(e){ return []; }
+}
+function saveTodos(todos){
+  localStorage.setItem(TODO_KEY, JSON.stringify(todos));
+}
+
+function renderTodos(){
+  todoListContainer.innerHTML = '';
+  const todos = loadTodos();
+  if(todos.length === 0){
+    todoListContainer.innerHTML = '<div class="tiny muted" style="padding:8px;">No tasks yet. Add one above!</div>';
+    return;
+  }
+  todos.forEach((todo, index) => {
+    const item = document.createElement('div');
+    item.className = `todo-item ${todo.completed ? 'completed' : ''}`;
+    item.innerHTML = `
+      <input type="checkbox" ${todo.completed ? 'checked' : ''} data-index="${index}" style="cursor:pointer;"/>
+      <div class="todo-text" data-index="${index}">${escapeHtml(todo.text)}</div>
+      <button class="btn ghost" data-action="remove" data-index="${index}" style="margin-left:8px;">Remove</button>
+    `;
+    item.querySelector('[type="checkbox"]').addEventListener('change', (e) => toggleTodo(index, e.target.checked));
+    item.querySelector('.todo-text').addEventListener('click', () => toggleTodo(index, !item.querySelector('[type="checkbox"]').checked));
+    item.querySelector('[data-action="remove"]').addEventListener('click', () => removeTodo(index));
+    todoListContainer.appendChild(item);
+  });
+}
+
+function addTodo(){
+  const text = newTodoInput.value.trim();
+  if(text === '') return flashToast('Task cannot be empty');
+  const todos = loadTodos();
+  todos.push({ text: text, completed: false, created: new Date().toISOString() });
+  saveTodos(todos);
+  newTodoInput.value = '';
+  renderTodos();
+  flashToast('Task added');
+}
+
+function toggleTodo(index, completed){
+  const todos = loadTodos();
+  if(todos[index]){
+    todos[index].completed = completed;
+    saveTodos(todos);
+    renderTodos();
+    flashToast(completed ? 'Task completed' : 'Task un-checked');
+  }
+}
+
+function removeTodo(index){
+  const todos = loadTodos();
+  todos.splice(index, 1);
+  saveTodos(todos);
+  renderTodos();
+  flashToast('Task removed');
+}
+
+addTodoBtn.addEventListener('click', addTodo);
+newTodoInput.addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') addTodo();
+});
+
+renderTodos(); // Initial render of To-Dos
+
+/* ------------------------------ Clock logic (analog/digital) ------------------------------ */
+const clockEl = by('clock');
+const analogContainer = by('analogContainer');
+const digitalContainer = by('digitalContainer');
+const timeStr = by('timeStr');
+const dateStr = by('dateStr');
+const tzName = by('tzName');
+const hourHand = by('hourHand');
+const minuteHand = by('minuteHand');
+const secondHand = by('secondHand');
+
+let showAnalog = true;
+function setClockView(analog){
+  showAnalog = !!analog;
+  analogContainer.style.display = showAnalog ? '' : 'none';
+  digitalContainer.style.display = showAnalog ? 'none' : '';
+}
+clockEl.addEventListener('click', ()=> setClockView(!showAnalog));
+by('copyBtn').addEventListener('click', async ()=>{
+  try{ await navigator.clipboard.writeText(new Date().toLocaleString()); flashToast('Time copied'); }catch(e){ flashToast('Copy failed'); }
+});
+
+function updateClock(){
+  const now = new Date();
+  const h = now.getHours(), m = now.getMinutes(), s = now.getSeconds();
+  timeStr.textContent = now.toLocaleTimeString();
+  dateStr.textContent = now.toLocaleDateString();
+  tzName.textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || 'local';
+  const secDeg = s * 6;
+  const minDeg = m * 6 + s * 0.1;
+  const hourDeg = (h % 12) * 30 + m * 0.5;
+  hourHand.style.transform = `translateX(-50%) translateY(-100%) rotate(${hourDeg}deg)`;
+  minuteHand.style.transform = `translateX(-50%) translateY(-100%) rotate(${minDeg}deg)`;
+  secondHand.style.transform = `translateX(-50%) translateY(-100%) rotate(${secDeg}deg)`;
+}
+setClockView(true);
+updateClock();
+setInterval(updateClock, 1000);
+
+/* ------------------------------ Calendar & Reminders UI ------------------------------ */
+const calGrid = by('calGrid');
+const monthLabel = by('monthLabel');
+const yearLabel = by('yearLabel');
+const prevMonth = by('prevMonth');
+const nextMonth = by('nextMonth');
+const selectedDateLabel = by('selectedDateLabel');
+const reminderList = by('reminderList');
+const addReminderBtn = by('addReminderBtn');
+const importFile = by('importFile');
+
+let today = new Date();
+let viewYear = today.getFullYear();
+let viewMonth = today.getMonth();
+let selectedDate = fmtDate(today);
+
+function renderCalendar(){
+  calGrid.innerHTML = '';
+  const first = new Date(viewYear, viewMonth, 1);
+  const startWeekday = first.getDay();
+  const daysInMonth = new Date(viewYear, viewMonth+1, 0).getDate();
+  const prevDays = startWeekday;
+  monthLabel.textContent = first.toLocaleString(undefined,{month:'long'});
+  yearLabel.textContent = viewYear;
+  const rems = loadReminders();
+  const prevMonthDays = new Date(viewYear, viewMonth, 0).getDate();
+
+  for(let i=0;i<prevDays;i++){
+    const dayNum = prevMonthDays - prevDays + 1 + i;
+    const el = document.createElement('div'); el.className='cal-day other'; el.textContent = dayNum; calGrid.appendChild(el);
+  }
+  for(let d=1; d<=daysInMonth; d++){
+    const dateObj = new Date(viewYear, viewMonth, d);
+    const iso = fmtDate(dateObj);
+    const el = document.createElement('div'); el.className='cal-day'; if(iso === fmtDate(today)) el.classList.add('today');
+    const has = rems[iso] && rems[iso].length>0; if(has) el.classList.add('has-reminder');
+    if(iso === selectedDate) el.classList.add('selected');
+    el.textContent = d;
+    el.addEventListener('click', ()=>{ selectedDate = iso; renderCalendar(); renderRemList(); });
+    calGrid.appendChild(el);
+  }
+  const totalCells = calGrid.children.length;
+  const rem = totalCells % 7;
+  if(rem !== 0){
+    const add = 7 - rem;
+    for(let i=1;i<=add;i++){ const el=document.createElement('div'); el.className='cal-day other'; el.textContent = i; calGrid.appendChild(el); }
+  }
+  selectedDateLabel.textContent = selectedDate;
+}
+prevMonth.addEventListener('click', ()=>{ viewMonth--; if(viewMonth<0){ viewMonth=11; viewYear--; } renderCalendar(); });
+nextMonth.addEventListener('click', ()=>{ viewMonth++; if(viewMonth>11){ viewMonth=0; viewYear++; } renderCalendar(); });
+
+function renderRemList(){
+  reminderList.innerHTML = '';
+  const rems = loadReminders();
+  const arr = rems[selectedDate] ? rems[selectedDate].slice().sort((a,b)=> (a.time||'') > (b.time||'') ? 1 : -1) : [];
+  if(arr.length===0){ reminderList.innerHTML = '<div class="tiny muted">No reminders for this day</div>'; return; }
+  arr.forEach((r, idx)=>{
+    const div = document.createElement('div'); div.style.display='flex'; div.style.justifyContent='space-between'; div.style.alignItems='center';
+    div.style.padding='8px'; div.style.marginBottom='8px'; div.style.borderRadius='8px'; div.style.background='rgba(255,255,255,0.02)';
+    const left = document.createElement('div'); left.innerHTML = `<div style="font-weight:700">${escapeHtml(r.title||'(no title)')}</div><div class="tiny muted">${escapeHtml(r.time||'')} ${escapeHtml(r.details||'')}</div>`;
+    const right = document.createElement('div'); const del = document.createElement('button'); del.className='btn ghost'; del.textContent='Delete';
+    del.addEventListener('click', ()=> removeReminder(selectedDate, idx));
+    right.appendChild(del);
+    div.appendChild(left); div.appendChild(right);
+    reminderList.appendChild(div);
+  });
+}
+function removeReminder(iso, idx){
+  const rems = loadReminders(); if(!rems[iso]) return;
+  rems[iso].splice(idx,1); if(rems[iso].length===0) delete rems[iso];
+  saveReminders(rems); renderCalendar(); renderRemList();
+}
+addReminderBtn.addEventListener('click', ()=> openModalFor(selectedDate));
+
+/* Modal */
+const modalBack = by('modalBack');
+const remDate = by('remDate');
+const remTime = by('remTime');
+const remTitle = by('remTitle');
+const remDetails = by('remDetails');
+by('cancelModal')?.addEventListener('click', ()=> modalBack.style.display='none');
+by('saveModal')?.addEventListener('click', ()=>{
+  const iso = remDate.value; if(!iso){ flashToast('Pick a date'); return; }
+  const r = { title: remTitle.value||'(no title)', details: remDetails.value||'', time: remTime.value||'' };
+  const rems = loadReminders(); rems[iso] = rems[iso] || []; rems[iso].push(r); saveReminders(rems);
+  modalBack.style.display='none'; renderCalendar(); if(iso===selectedDate) renderRemList(); flashToast('Saved reminder');
+});
+function openModalFor(dateIso){ modalBack.style.display='flex'; remDate.value = dateIso; remTime.value=''; remTitle.value=''; remDetails.value=''; }
+
+/* export/import */
+by('exportRem').addEventListener('click', ()=>{
+  const data = localStorage.getItem(STORAGE_KEY) || '{}';
+  const blob = new Blob([data], {type:'application/json'});
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download='reminders.json'; document.body.appendChild(a); a.click(); a.remove();
+});
+by('importRem').addEventListener('click', ()=> importFile.click());
+importFile.addEventListener('change', e=>{
+  const f = e.target.files[0]; if(!f) return;
+  const r = new FileReader(); r.onload = ()=>{ try{ const parsed = JSON.parse(r.result); if(typeof parsed==='object'){ saveReminders(parsed); flashToast('Imported'); renderCalendar(); renderRemList(); } else flashToast('Invalid file'); }catch(e){ flashToast('Invalid JSON'); } }; r.readAsText(f);
+});
+
+/* initial calendar render */
+renderCalendar(); renderRemList();
+
+/* ------------------------------ Notifications / toast ------------------------------ */
+let toastTimer;
+function flashToast(msg){ clearTimeout(toastTimer); let el=by('__dash_toast'); if(!el){ el=document.createElement('div'); el.id='__dash_toast'; el.style.position='fixed'; el.style.right='18px'; el.style.bottom='18px'; el.style.background='linear-gradient(90deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02))'; el.style.border='1px solid rgba(255,255,255,0.04)'; el.style.padding='10px 14px'; el.style.borderRadius='10px'; el.style.color='#dff7ff'; el.style.zIndex=9999; document.body.appendChild(el);} el.textContent=msg; el.style.display='block'; toastTimer=setTimeout(()=>el.style.display='none',3500); }
+function notifyUser(title, body){ flashToast(title + ' ' + body); if('Notification' in window && Notification.permission==='granted'){ new Notification(title, {body}); } }
+
+/* check reminders each minute */
+setInterval(()=>{
+  const rems = loadReminders();
+  const now = new Date(); const iso = fmtDate(now); const tm = now.toTimeString().slice(0,5);
+  const arr = rems[iso] || [];
+  arr.forEach(r=>{ if(r.time && r.time === tm) notifyUser(`Reminder: ${r.title}`, r.details || ''); });
+}, 60*1000);
+
+/* ------------------------------ Weather integration (Open-Meteo) ------------------------------ */
+/* We'll show icons for current weather variables and for forecast. Icons are inline SVGs selected by simple thresholds/mappings. */
+const locationInput = by('locationInput');
+const setLoc = by('setLoc');
+const useGeoloc = by('useGeoloc');
+const locLabel = by('locLabel');
+const forecastGrid = by('forecastGrid');
+const currentTemp = by('currentTemp');
+const currentSummary = by('currentSummary');
+const curIcon = by('curIcon');
+const currentMetrics = by('currentMetrics');
+const currentTime = by('currentTime');
+const currentAQ = by('currentAQ');
+const fullReport = by('fullReport'); // Retained for source info
+
+let currentLocation = loadLocation() || null;
+
+function showLocation(loc){
+  currentLocation = loc;
+  if(loc){ locLabel.textContent = `Location: ${loc.name || loc.lat+','+loc.lon}`; saveLocation(loc); } else { locLabel.textContent = 'Location: not set'; localStorage.removeItem(LOC_KEY); }
+}
+
+/* geocode via Nominatim */
+async function geocodeName(q){
+  try{
+    const u = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}&limit=5`;
+    const r = await fetch(u, {headers:{'User-Agent':'Dashboard/1.0'}});
+    const arr = await r.json();
+    if(arr && arr.length>0){ const b = arr[0]; return {name:b.display_name, lat:parseFloat(b.lat), lon:parseFloat(b.lon)}; }
+  }catch(e){ console.error(e); }
+  return null;
+}
+
+setLoc.addEventListener('click', async ()=>{
+  const q = (locationInput.value||'').trim(); if(!q) return flashToast('Enter location');
+  if(/^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(q)){ const [lat,lon]=q.split(',').map(s=>parseFloat(s.trim())); const loc={name:`${lat.toFixed(4)},${lon.toFixed(4)}`,lat,lon}; showLocation(loc); await fetchWeatherFor(loc); return; }
+  flashToast('Finding location...');
+  const loc = await geocodeName(q); if(!loc) return flashToast('Not found'); showLocation(loc); await fetchWeatherFor(loc);
+});
+
+useGeoloc.addEventListener('click', ()=>{
+  if(!navigator.geolocation){ flashToast('Geolocation not available'); return; }
+  flashToast('Acquiring position...');
+  navigator.geolocation.getCurrentPosition(async pos=>{
+    const lat = pos.coords.latitude, lon = pos.coords.longitude;
+    const loc = {name:`Coords ${lat.toFixed(3)},${lon.toFixed(3)}`, lat, lon}; showLocation(loc); await fetchWeatherFor(loc);
+  }, ()=>{
+    flashToast('Geolocation failed');
+  }, {timeout:10000});
+});
+
+/* fetch weather from Open-Meteo (no key) */
+async function fetchWeatherFor(loc){
+  try{
+    flashToast('Fetching weather...');
+    const lat = loc.lat, lon = loc.lon;
+    const dailyVars = ['weathercode','temperature_2m_max','temperature_2m_min','sunrise','sunset','precipitation_sum'];
+    const params = [
+      `latitude=${lat}`, `longitude=${lon}`, `daily=${dailyVars.join(',')}`,
+      `hourly=temperature_2m,relativehumidity_2m,cloudcover,windspeed_10m,winddirection_10m`,
+      `forecast_days=7`, `timezone=auto`, `air_quality=aqi_us`
+    ];
+    const url = `https://api.open-meteo.com/v1/forecast?${params.join('&')}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    renderWeatherData(loc, data);
+  }catch(e){ console.error(e); flashToast('Weather fetch failed'); }
+}
+
+/* Icon helpers: we return small inline SVG strings. Keep icons simple but expressive. */
+
+function svg_sun(){ return `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="4" fill="#FFD166"/><g stroke="#FFD166" stroke-width="1.2" stroke-linecap="round"><path d="M12 1v2"/><path d="M12 21v2"/><path d="M4.22 4.22l1.42 1.42"/><path d="M18.36 18.36l1.42 1.42"/><path d="M1 12h2"/><path d="M21 12h2"/><path d="M4.22 19.78l1.42-1.42"/><path d="M18.36 5.64l1.42-1.42"/></g></svg>`; }
+function svg_cloud(){ return `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 17H7a4 4 0 010-8 5.5 5.5 0 0110.5 1.3A3.5 3.5 0 0120 17z" fill="#cfd8de"/></svg>`; }
+function svg_rain(){ return `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 16a4 4 0 00-4-4H8a4 4 0 00-1 7.8" fill="#cfd8de"/><g stroke="#6ec6ff" stroke-linecap="round" stroke-width="1.6"><path d="M8 20l0 2"/><path d="M12 20l0 2"/><path d="M16 20l0 2"/></g></svg>`; }
+function svg_snow(){ return `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M20 16a4 4 0 00-4-4H8a4 4 0 00-1 7.8" fill="#e6f2ff"/><g stroke="#7be495" stroke-width="1.6" stroke-linecap="round"><path d="M12 4v4"/><path d="M10 6h4"/><path d="M6 10h12"/></g></svg>`; }
+function svg_wind(dirDeg){ /* simple arrow rotated to direction */ 
+  const rot = (dirDeg || 0);
+  return `<svg viewBox="0 0 24 24" style="transform:rotate(${rot}deg)" xmlns="http://www.w3.org/2000/svg"><path d="M3 12c2-4 6-6 10-6s8 2 10 6" stroke="#9be7ff" stroke-width="1.6" fill="none" stroke-linecap="round"/><path d="M21 6l-3 3 3-3z" fill="#9be7ff"/></svg>`;
+}
+function svg_humidity(level){ /* level 0-100 */
+  if(level >= 75) return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2s5 6 5 9a5 5 0 11-10 0c0-3 5-9 5-9z" fill="#6ec6ff"/></svg>`;
+  if(level >= 40) return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2s4 5 4 8a4 4 0 11-8 0c0-3 4-8 4-8z" fill="#86d0ff"/></svg>`;
+  return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M12 2s3 4 3 6a3 3 0 11-6 0c0-2 3-6 3-6z" fill="#cfefff"/></svg>`;
+}
+function svg_cloud_level(cloud){ /* cloud percent */
+  if(cloud >= 75) return svg_cloud();
+  if(cloud >= 35) return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path d="M18 16H6a3 3 0 010-6 5 5 0 0110 1.5A2 2 0 0118 16z" fill="#d4dff0"/></svg>`;
+  return svg_sun();
+}
+function svg_aqi(aqi){ /* simple colored circle */
+  const a = aqi || 0; let color = '#7be495';
+  if(!aqi) color = '#999'; else if(a > 150) color = '#ff6b6b'; else if(a > 100) color = '#ffb86b'; else if(a > 50) color = '#ffd86b';
+  return `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><circle cx="12" cy="12" r="8" fill="${color}"/></svg>`;
+}
+
+/* map Open-Meteo weathercode to a simple category */
+function weatherCodeToCategory(code){
+  // codes for precip/snow/thunder etc.
+  if(code === 0) return 'clear';
+  if([1,2].includes(code)) return 'partly';
+  if([3].includes(code)) return 'overcast';
+  if([45,48].includes(code)) return 'fog';
+  if([51,53,55,61,63,65,80,81,82].includes(code)) return 'rain';
+  if([71,73,75,77,85,86].includes(code)) return 'snow';
+  if([95,96,99].includes(code)) return 'thunder';
+  return 'cloud';
+}
+
+/* helper human readable map */
+function weatherCodeToText(code){
+  const map = {0:'Clear sky',1:'Mainly clear',2:'Partly cloudy',3:'Overcast',45:'Fog',48:'Rime fog',51:'Light drizzle',53:'Moderate drizzle',55:'Dense drizzle',61:'Slight rain',63:'Moderate rain',65:'Heavy rain',71:'Slight snow',73:'Moderate snow',75:'Heavy snow',80:'Rain showers slight',81:'Rain showers moderate',82:'Violent rain showers',95:'Thunderstorm'};
+  return map[code] || 'Weather';
+}
+
+/* build metric element */
+function makeMetric(svgHtml, label, val){
+  const div = document.createElement('div'); div.className='metric';
+  const svgWrap = document.createElement('div'); svgWrap.innerHTML = svgHtml;
+  const lbl = document.createElement('div'); lbl.style.display='flex'; lbl.style.flexDirection='column';
+  const lab = document.createElement('div'); lab.className='tiny'; lab.style.color='var(--muted)'; lab.textContent = label;
+  const value = document.createElement('div'); value.className='val'; value.innerHTML = val;
+  lbl.appendChild(lab); lbl.appendChild(value);
+  div.appendChild(svgWrap); div.appendChild(lbl);
+  return div;
+}
+
+/* render weather data and set icons */
+function renderWeatherData(loc, data){
+  if(!data) return;
+  showLocation(loc);
+  // choose current hour index
+  let idx = 0;
+  if(data.hourly && Array.isArray(data.hourly.time) && data.hourly.time.length){
+    const now = new Date();
+    const times = data.hourly.time.map(t=>new Date(t));
+    let best=0, bestD=Number.POSITIVE_INFINITY;
+    times.forEach((t,i)=>{ const d=Math.abs(now - t); if(d<bestD){bestD=d;best=i;} });
+    idx = best;
+  }
+
+  const temp = data.hourly?.temperature_2m?.[idx];
+  const hum = data.hourly?.relativehumidity_2m?.[idx];
+  const cloud = data.hourly?.cloudcover?.[idx];
+  const wind = data.hourly?.windspeed_10m?.[idx];
+  const winddir = data.hourly?.winddirection_10m?.[idx];
+  const aqi = data.hourly?.aqi_us?.[idx] ?? null;
+  const wcodeNow = data.daily?.weathercode?.[0];
+
+  currentTemp.textContent = temp === undefined ? '--°' : `${Math.round(temp)}°C`;
+  currentSummary.textContent = weatherCodeToText(wcodeNow) || 'Current';
+  const now = new Date();
+  currentTime.textContent = now.toLocaleTimeString();
+  currentAQ.textContent = aqi ? `AQI ${Math.round(aqi)}` : 'AQI N/A';
+
+  // main icon selection for current weather
+  const cat = weatherCodeToCategory(wcodeNow);
+  let mainIcon = svg_sun();
+  if(cat === 'clear') mainIcon = svg_sun();
+  else if(cat === 'partly') mainIcon = `<svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">${svg_sun().replace('<svg','<g').replace('</svg>','</g>')}<g transform="translate(6,6)">${svg_cloud().replace('<svg','').replace('</svg>','')}</g></svg>`;
+  else if(cat === 'rain') mainIcon = svg_rain();
+  else if(cat === 'snow') mainIcon = svg_snow();
+  else mainIcon = svg_cloud();
+
+  curIcon.innerHTML = mainIcon;
+
+  // metrics: humidity, wind, cloud, aqi - construct nicely with icons
+  currentMetrics.innerHTML = '';
+  currentMetrics.appendChild(makeMetric(svg_humidity(hum||0), 'Humidity', hum ? Math.round(hum) + '%' : '--'));
+  currentMetrics.appendChild(makeMetric(svg_wind(winddir || 0), `Wind ${wind?Math.round(wind)+' m/s':''}`, wind?Math.round(wind)+' m/s':'--'));
+  currentMetrics.appendChild(makeMetric(svg_cloud_level(cloud || 0), 'Cloud', cloud ? Math.round(cloud)+'%' : '--'));
+  currentMetrics.appendChild(makeMetric(svg_aqi(aqi), 'Air', aqi ? Math.round(aqi) : 'N/A'));
+
+  // Forecast generation: present icon per day's weathercode
+  forecastGrid.innerHTML = '';
+  const days = data.daily?.time || [];
+  for(let i=0;i<days.length;i++){
+    const day = days[i];
+    const tmax = data.daily?.temperature_2m_max?.[i];
+    const tmin = data.daily?.temperature_2m_min?.[i];
+    const wcode = data.daily?.weathercode?.[i];
+    const catd = weatherCodeToCategory(wcode);
+    const label = new Date(day).toLocaleDateString(undefined,{weekday:'short',day:'numeric',month:'short'});
+    const card = document.createElement('div'); card.className='day-card';
+    // choose icon for forecast
+    let ico = svg_cloud();
+    if(catd==='clear') ico = svg_sun();
+    else if(catd==='rain') ico = svg_rain();
+    else if(catd==='snow') ico = svg_snow();
+    else if(catd==='partly') ico = svg_sun();
+    else ico = svg_cloud();
+    card.innerHTML = `<div style="font-weight:700">${label}</div><div style="margin-top:6px">${ico}</div><div style="font-size:16px;font-weight:700">${tmax!==undefined?Math.round(tmax)+'°':'--'} / ${tmin!==undefined?Math.round(tmin)+'°':'--'}</div><div class="tiny muted" style="margin-top:6px">${weatherCodeToText(wcode)}</div>`;
+    forecastGrid.appendChild(card);
+  }
+
+  fullReport.textContent = `Source: Open-Meteo — Summary: ${data.daily?.temperature_2m_max ? 'Max ' + Math.round(data.daily.temperature_2m_max[0]) + '°C' : ''}`;
+}
+
+
+/* Initialize: load saved location and fetch */
+showLocation(currentLocation);
+if(currentLocation) fetchWeatherFor(currentLocation);
+
+/* keyboard fullscreen */
+document.addEventListener('keydown', e=>{ if(e.key==='f'){ if(!document.fullscreenElement) document.documentElement.requestFullscreen().catch(()=>{}); else document.exitFullscreen().catch(()=>{}); } });
+
+/* small initialization for notifications and reminders at load */
+window.addEventListener('load', ()=>{
+  if('Notification' in window && Notification.permission === 'default') Notification.requestPermission().then(()=>{});
+  // show today's reminders on load
+  const rems = loadReminders(); const iso = fmtDate(new Date()); (rems[iso]||[]).forEach(r=> notifyUser(`Reminder: ${r.title}`, r.details || ''));
+});
+
+/* small helper: check reminders periodically already set above */
+setInterval(()=>{ /* done earlier */ }, 60000);
+
+/* Expose fetchWeatherFor for initial run if location exists */
+if(currentLocation) fetchWeatherFor(currentLocation);
+
+/* End of script */
+</script>
+</body>
+</html>
